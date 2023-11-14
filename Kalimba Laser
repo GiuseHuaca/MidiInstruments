@@ -1,0 +1,313 @@
+/*
+
+   Kalimba laser midi
+
+   Created: 8/8/2022
+
+   Author: Giuseppe Siggia <emptyinstruments@gmail.com>
+
+
+
+   http://www.emptyinstruments.it
+
+*/
+
+#include "MIDIUSB.h"
+#include "PitchToNote.h"
+#include <SevSegShift.h>
+#include <ResponsiveAnalogRead.h>
+
+#define SHIFT_PIN_SHCP 9
+#define SHIFT_PIN_STCP 8
+#define SHIFT_PIN_DS   7
+#define NOTE 8
+
+SevSegShift sevseg(SHIFT_PIN_DS, SHIFT_PIN_SHCP, SHIFT_PIN_STCP, 1, true);
+
+#define s0 14
+#define s1 16
+#define s2 10
+
+#define tilt 4
+
+const uint8_t Fbutton = 15; 
+
+const uint8_t Cbutton2 = 2;
+const uint8_t Cbutton1 = 3;
+
+const byte Ottava1[] = {pitchC4,pitchA3b,pitchF3,pitchD3,pitchC3,pitchE3b,pitchG3,pitchB3b};
+
+const byte Ottava2[] = {pitchD5,pitchB4b,pitchG4,pitchE4b,pitchD4,pitchF4,pitchA4b,pitchC5};
+
+const byte Toner[] = {0,2,4,6,8,10,12};
+
+volatile int canaleOra = 0;
+volatile int canalePrima = 0;
+
+volatile int canaleOra2 = 0;
+volatile int canalePrima2 = 0;
+
+volatile int tonoOra = 0;
+volatile int tonoPrima = 0;
+
+unsigned long Tono = 0;
+int canale = 0;
+
+int thr = 500;
+
+int stato[] = {0,0,0,0,0,0,0,0};
+int statoB[] = {0,0,0,0,0,0,0,0};
+
+int statoOttava = 0;
+
+const int intensityPot = A1;
+
+ResponsiveAnalogRead analogOne(A3, true, 0.01);
+ResponsiveAnalogRead analogTwo(A2, true, 0.01);
+
+uint8_t intensity;
+int intensity1;
+int intensity2;
+
+void setup() {
+
+  Serial.begin(9600);
+
+  pinMode(s2, OUTPUT);
+  pinMode(s1, OUTPUT);
+  pinMode(s0, OUTPUT);
+
+  pinMode (Cbutton1, INPUT_PULLUP);
+  pinMode (Cbutton2, INPUT_PULLUP);
+
+  pinMode (Fbutton, INPUT_PULLUP);
+
+  pinMode (tilt, INPUT);
+
+  byte numDigits = 2;
+  byte digitPins[] = {6, 5};
+  byte segmentPins[] = {0, 1, 2, 3, 4, 5, 6, 7};
+  bool resistorsOnSegments = false;
+  byte hardwareConfig = COMMON_CATHODE;
+  bool updateWithDelays = false;
+  bool leadingZeros = false;
+  bool disableDecPoint = true;
+
+  sevseg.begin(hardwareConfig, numDigits, digitPins, segmentPins, resistorsOnSegments, updateWithDelays, leadingZeros, disableDecPoint);
+  sevseg.setBrightness(10);
+
+}
+
+void readCambioCanale() {
+  
+    canaleOra = digitalRead(Cbutton2);                       
+  if ((canaleOra != canalePrima) && (canalePrima == LOW))   
+  {
+    for (int i = 0; i < 8; i++){ 
+    noteOff(canale, Ottava1[i]+Tono, 0);
+    noteOff(canale, Ottava2[i]+Tono, 0);
+    stato[i] = 0;
+    MidiUSB.flush();
+    }
+    canalePrima = canaleOra;
+    canale++;
+    if (canale > 15) {
+      canale = 0;
+    }
+  }
+  if ((canaleOra != canalePrima) && (canalePrima == HIGH))   //il pulsante e' appena stato rilasciato
+  {
+
+    canalePrima = canaleOra;
+
+  }
+
+  canaleOra2 = digitalRead(Cbutton1);                                        
+  if ((canaleOra2 != canalePrima2) && (canalePrima2 == LOW))                   
+  {
+    for (int i = 0; i < 8; i++){ 
+    noteOff(canale, Ottava1[i]+Tono, 0);
+    noteOff(canale, Ottava2[i]+Tono, 0);
+    stato[i] = 0;
+    MidiUSB.flush();
+    }
+    
+    canalePrima2 = canaleOra2;
+    canale--;
+    if (canale < 0) {
+      canale = 15;
+    }
+  }
+  if ((canaleOra2 != canalePrima2) && (canalePrima2 == HIGH))      //il pulsante e' appena stato rilasciato
+  {
+
+    canalePrima2 = canaleOra2;
+  }
+}
+    
+void loop() {
+
+  readCambioCanale();
+  readDisplay();
+  readPhotoresistor();
+  readIntensity();
+  readSlide();
+}
+
+void controlChange(byte channel, byte control, byte value) {
+
+  midiEventPacket_t event = {0x0B, 0xB0 | canale, control, value};
+
+  MidiUSB.sendMIDI(event);
+
+}
+
+void readIntensity()
+{
+
+  int val = analogRead(intensityPot);
+
+  intensity = (uint8_t) (map(val, 0, 1023, 0, 127));
+}
+
+void readSlide(){
+  
+  analogOne.update();
+  analogTwo.update();
+  
+  int val1 = analogRead(A3);
+  intensity1 = (map(val1, 0, 1023, 0, 127));
+
+  int val2 = analogRead(A2);
+  intensity2 = (map(val2, 0, 1023, 0, 127));
+
+  analogOne.getValue();
+  analogTwo.getValue();
+  
+  //Serial.print("\t");
+  //Serial.print(analog.getValue());
+  if(analogOne.hasChanged()) {
+    //Serial.print("\tchanged");
+  controlChange(canale, 1, intensity1);
+
+  }
+  if(analogTwo.hasChanged()) {
+    //Serial.print("\tchanged");
+    controlChange(canale, 2, intensity2);
+  }
+}
+
+void readDisplay() {
+
+  sevseg.setNumber(canale + 1);
+  sevseg.refreshDisplay();
+}
+
+void readPhotoresistor()
+{
+  for (int i = 0; i < 8; i++) {
+    digitalWrite (s0, bitRead(i, 0));
+    digitalWrite (s1, bitRead(i, 1));
+    digitalWrite (s2, bitRead(i, 2));
+
+    int v = analogRead (A0);
+    //Serial.print(i);
+    //Serial.print("v=");
+    //Serial.println(v);
+    //delay(500);
+    
+  tonoOra = digitalRead(Fbutton);
+  
+  if ((tonoOra != tonoPrima) && (tonoPrima == LOW)){
+    tonoPrima = tonoOra;
+    
+    for (int i = 0; i < 8; i++){ 
+    noteOff(canale, Ottava1[i]+Tono, 0);
+    noteOff(canale, Ottava2[i]+Tono, 0);
+    stato[i] = 0;
+    MidiUSB.flush();
+    }
+    Tono++;    
+    
+     if (Tono > 12){
+      Tono = 0;     
+    }    
+    }
+  if ((tonoOra != tonoPrima) && (tonoPrima == HIGH)){
+    tonoPrima = tonoOra;
+}
+
+    if (digitalRead(tilt) == LOW) {
+      if (statoOttava == 0){     
+        
+        for (int i = 0; i < 8; i++){       
+        noteOff(canale, Ottava2[i]+Tono, 0);
+      
+        MidiUSB.flush();
+        statoOttava = 1;
+      }     
+    }
+       
+      if (i == i and v < thr and stato[i] == 0)
+      {
+        stato[i] = 1;
+        noteOn(canale, Ottava1[i]+Tono, intensity);
+        MidiUSB.flush();
+      }
+
+      if (i == i and v > thr and stato[i] == 1)
+      {
+
+        stato[i] = 0;
+        noteOff(canale, Ottava1[i]+Tono, 0);
+        MidiUSB.flush();
+      }
+    }
+      
+    else {
+
+      if (digitalRead(tilt) == HIGH) {
+        if (statoOttava == 1){
+      
+      for (int i = 0; i < 8; i++){
+      noteOff(canale, Ottava1[i]+Tono, 0);
+      
+      MidiUSB.flush();
+      statoOttava = 0;
+        }
+        }
+        if (i == i and v < thr and statoB[i] == 0)
+        {
+          statoB[i] = 1;
+          noteOn(canale, Ottava2[i]+Tono, intensity);
+          MidiUSB.flush();
+
+
+        }
+
+        if (i == i and v > thr and statoB[i] == 1)
+        {
+
+          statoB[i] = 0;
+          noteOff(canale, Ottava2[i]+Tono, 0);
+          MidiUSB.flush();
+        }
+      }
+    }
+  }
+}
+
+void noteOn(byte channel, byte pitch, byte velocity) {
+
+  midiEventPacket_t noteOn = {0x09, 0x90 | channel, pitch, velocity};
+
+  MidiUSB.sendMIDI(noteOn);
+
+}
+
+void noteOff(byte channel, byte pitch, byte velocity) {
+
+  midiEventPacket_t noteOff = {0x08, 0x80 | channel, pitch, velocity};
+
+  MidiUSB.sendMIDI(noteOff);
+}
