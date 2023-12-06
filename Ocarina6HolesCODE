@@ -1,0 +1,167 @@
+#include "MIDIUSB.h"
+#include "PitchToNote.h"
+#include "HX711.h"
+
+HX711 scale;
+
+uint8_t dataPin = 6;
+uint8_t clockPin = 7;
+
+uint32_t start, stop;
+volatile float f;
+
+int PULSANTE = 16;
+#define LedFiato 9
+
+uint8_t pintouch1 =2;
+uint8_t pintouch2 =3;
+uint8_t pintouch3 =4;
+uint8_t pintouch4 =5;
+uint8_t pintouch5 =10;
+uint8_t pintouch6 =8;
+
+uint8_t Valtouch1 = 0;
+uint8_t Valtouch2 = 0;
+uint8_t Valtouch3 = 0;
+uint8_t Valtouch4 = 0;
+uint8_t Valtouch5 = 0;
+uint8_t Valtouch6 = 0;
+
+volatile int tonoOra = 0;
+volatile int tonoPrima = 0;
+unsigned long Tono = 0;
+
+int Valtouch [] = {Valtouch1,Valtouch2,Valtouch3,Valtouch4,Valtouch5,Valtouch6};
+int pulsanti [] = {pintouch1,pintouch2,pintouch3,pintouch4,pintouch5,pintouch6};
+
+int valoreCombo [] ={752,792,717,757,754,719,740,705,742,707,905,942,907,894,859};
+
+int statoCombo [] ={0,0,0,0,0,0,0,0,0,0,0,0,0,0,0} ;
+
+int note[] = {pitchC1,pitchD1b,pitchD1,pitchE1b,pitchE1,pitchF1,pitchG1b,pitchG1,pitchA1b,pitchA1,pitchB1b,pitchB1,pitchC2,pitchD2b,pitchD2};
+
+int ValoreTouchIf [] = {47,5,39,308,106,247};
+int ValoreTouchElse [] = {12,7,27,508,146,199};
+
+uint8_t statoFiato;
+
+void setup() {
+  
+Serial.begin(115200);
+
+scale.begin(dataPin, clockPin);
+scale.set_scale(420.0983);
+scale.tare();
+
+pinMode(PULSANTE,INPUT);
+pinMode(2,INPUT);
+pinMode(3,INPUT);
+pinMode(4,INPUT);
+pinMode(5,INPUT);
+pinMode(8,INPUT);
+pinMode(10,INPUT);
+pinMode(LedFiato,OUTPUT);
+
+}
+
+void loop() {
+ 
+  f = scale.get_units(1);
+  
+  //Serial.println(statoFiato);
+  
+  tonoOra = digitalRead(PULSANTE);
+  if ((tonoOra != tonoPrima) && (tonoPrima == LOW)){
+    tonoPrima = tonoOra;
+    for (int i = 0; i < 14; i++){
+    statoCombo[i] = 0;
+    noteOff(1,note[i] + Tono,0);
+    MidiUSB.flush();
+    }
+    Tono = Tono + 12;
+    }
+          
+     if (Tono > 84){
+      Tono = 0;     
+    }    
+  if ((tonoOra != tonoPrima) && (tonoPrima == HIGH)){
+    tonoPrima = tonoOra;
+}
+
+if (f > 500){
+
+statoFiato = 1;
+
+digitalWrite(LedFiato,HIGH);
+
+  for (int r = 0; r < 5; r++){
+
+//Serial.println(combo);
+if (digitalRead(pulsanti[r]) == HIGH){
+  Valtouch[r] = ValoreTouchIf[r];
+}
+else{
+  if (digitalRead(pulsanti[r]) == LOW){
+    Valtouch[r] = ValoreTouchElse[r];
+  }
+}
+}
+
+int combo = Valtouch[0]+Valtouch[1]+Valtouch[2]+Valtouch[3]+Valtouch[4]+Valtouch[5];
+   
+    for (int i = 0; i < 14; i++){
+    
+    if (combo == valoreCombo[i] and statoCombo [i] ==0){
+    
+      statoCombo[i] = 1;
+      noteOn(1,note[i]+ Tono,127);
+      MidiUSB.flush();
+    }
+    else{
+      if (combo != valoreCombo[i] and statoCombo [i] ==1){
+      
+      statoCombo[i] = 0;
+      noteOff(1,note[i] + Tono,0);
+      MidiUSB.flush();
+    }
+    }
+}
+}
+
+else{
+  
+  if ((f < 500) and (statoFiato == 1)){
+  digitalWrite(LedFiato, LOW);
+  statoFiato = 0;
+   
+  for (int i = 0; i < 14; i++){
+    noteOff(1,note[i] + Tono,0);
+      MidiUSB.flush();
+      statoCombo[i] = 0;
+  }
+}
+}
+}
+
+void controlChange(byte channel, byte control, byte value) {
+
+  midiEventPacket_t event = {0x0B, 0xB0 | channel, control, value};
+
+  MidiUSB.sendMIDI(event);
+
+}
+
+void noteOn(byte channel, byte pitch, byte velocity) {
+
+  midiEventPacket_t noteOn = {0x09, 0x90 | channel, pitch, velocity};
+
+  MidiUSB.sendMIDI(noteOn);
+
+}
+
+void noteOff(byte channel, byte pitch, byte velocity) {
+
+  midiEventPacket_t noteOff = {0x08, 0x80 | channel, pitch, velocity};
+
+  MidiUSB.sendMIDI(noteOff);
+}
